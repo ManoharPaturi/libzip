@@ -41,8 +41,6 @@ endforeach()
 
 # The internal symbol is hidden when zip is a shared library, so link against the file directly.
 target_sources(crypto_clear PRIVATE ${PROJECT_SOURCE_DIR}/lib/zip_crypto.c)
-# same for the internal entry source constructor used by compress_stream_leak
-target_sources(compress_stream_leak PRIVATE ${PROJECT_SOURCE_DIR}/lib/zip_source_zip_new.c)
 
 # both programs using source_hole.c also use getopt
 if(NOT HAVE_GETOPT)
