@@ -1,5 +1,6 @@
+
 /*
- compress_stream_leak.c -- exercise free without close on compression sources
+ compress_stream_leak.c -- exercise freeing an open compression source
  Copyright (C) 2026 Dieter Baron and Thomas Klausner
 
  This file is part of libzip, a library to manipulate ZIP archives.
@@ -30,55 +31,63 @@
  IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/* Creates an archive with a deflated entry, then repeatedly opens the
-   entry and discards the archive without closing the file first. The
-   compression source is freed while its zlib stream is still active;
-   before the deallocate fix this leaked the stream state on every
-   iteration, which a leak checker reports. */
+/* Opens an archive with one deflated entry from a memory buffer, then
+   discards the archive without closing the open file. The compression
+   source is freed while its zlib stream is still active; before the
+   deallocate fix this leaked the stream state on every iteration,
+   which a leak checker reports. */
 
 #include <stdio.h>
 #include <string.h>
 
 #include "zip.h"
 
-static const char payload[] = "ababab ababab ababab ababab\n";
+/* a zip archive containing one deflated file, payload.txt */
+static const unsigned char archive[] = {
+    80, 75, 3, 4, 20, 0, 0, 0, 8, 0, 175, 187, 67, 93, 210, 145, 133, 136, 15, 0, 0, 0, 112, 0
+    , 0, 0, 11, 0, 0, 0, 112, 97, 121, 108, 111, 97, 100, 46, 116, 120, 116, 75, 76, 74, 4, 66
+    , 133, 68, 44, 20, 23, 54, 65, 74, 229, 0, 80, 75, 1, 2, 20, 3, 20, 0, 0, 0, 8, 0, 175, 18
+    7, 67, 93, 210, 145, 133, 136, 15, 0, 0, 0, 112, 0, 0, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    , 0, 128, 1, 0, 0, 0, 0, 112, 97, 121, 108, 111, 97, 100, 46, 116, 120, 116, 80, 75, 5, 6,
+     0, 0, 0, 0, 1, 0, 1, 0, 57, 0, 0, 0, 56, 0, 0, 0, 0, 0
+};
 
 int main(void) {
-    const char archive_name[] = "compress_stream_leak.zip";
     char buffer[8192];
-    zip_t *za;
-    zip_source_t *src;
     int i;
 
-    za = zip_open(archive_name, ZIP_CREATE | ZIP_TRUNCATE, NULL);
-    if (za == NULL) {
-        fprintf(stderr, "can't create archive\n");
-        return 1;
-    }
-    src = zip_source_buffer(za, payload, sizeof(payload) - 1, 0);
-    if (src == NULL || zip_file_add(za, "payload.txt", src, ZIP_FL_ENC_UTF_8) < 0 || zip_set_file_compression(za, 0, ZIP_CM_DEFLATE, 1) < 0 || zip_close(za) < 0) {
-        fprintf(stderr, "can't populate archive\n");
-        zip_discard(za);
-        return 1;
-    }
-
     for (i = 0; i < 200; i++) {
-        za = zip_open(archive_name, 0, NULL);
-        if (za == NULL) {
-            fprintf(stderr, "can't open archive on iteration %d\n", i);
+        zip_error_t error;
+        zip_source_t *src;
+        zip_t *za;
+        zip_file_t *zf;
+
+        zip_error_init(&error);
+        src = zip_source_buffer_create(archive, sizeof(archive), 0, &error);
+        if (src == NULL) {
+            fprintf(stderr, "can't create source on iteration %d: %s\n", i, zip_error_strerror(&error));
+            zip_error_fini(&error);
             return 1;
         }
-        zip_file_t *zf = zip_fopen(za, "payload.txt", 0);
+        za = zip_open_from_source(src, 0, &error);
+        if (za == NULL) {
+            fprintf(stderr, "can't open archive on iteration %d: %s\n", i, zip_error_strerror(&error));
+            zip_source_free(src);
+            zip_error_fini(&error);
+            return 1;
+        }
+        zip_error_fini(&error);
+
+        zf = zip_fopen(za, "payload.txt", 0);
         if (zf == NULL) {
-            fprintf(stderr, "can't open file on iteration %d\n", i);
+            fprintf(stderr, "can't open file on iteration %d: %s\n", i, zip_strerror(za));
             zip_discard(za);
             return 1;
         }
         (void)zip_fread(zf, buffer, sizeof(buffer));
-        /* deliberately no zip_fclose: this exercises freeing the source while it is open */
+        /* deliberately no zip_fclose: this frees the source while it is open */
         zip_discard(za);
     }
 
-    remove(archive_name);
     return 0;
 }
