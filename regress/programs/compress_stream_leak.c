@@ -31,24 +31,23 @@
  IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/* Opens an archive with one deflated entry from a memory buffer, then
-   discards the archive without closing the open file. The compression
-   source is freed while its zlib stream is still active; before the
-   deallocate fix this leaked the stream state on every iteration,
-   which a leak checker reports. */
+/* Opens a compressed entry source and frees it without closing it
+   first. The compression source is torn down while its zlib stream is
+   still active; before the deallocate fix this leaked the stream state
+   on every iteration, which a leak checker reports. */
 
 #include <stdio.h>
 #include <string.h>
 
-#include "zip.h"
+#include "zipint.h"
 
 /* a zip archive containing one deflated file, payload.txt */
 static const unsigned char archive[] = {
-    80, 75, 3, 4, 20, 0, 0, 0, 8, 0, 167, 188, 67, 93, 210, 145,
+    80, 75, 3, 4, 20, 0, 0, 0, 8, 0, 73, 1, 68, 93, 210, 145,
     133, 136, 15, 0, 0, 0, 112, 0, 0, 0, 11, 0, 0, 0, 112, 97,
     121, 108, 111, 97, 100, 46, 116, 120, 116, 75, 76, 74, 4, 66, 133, 68,
     44, 20, 23, 54, 65, 74, 229, 0, 80, 75, 1, 2, 20, 3, 20, 0,
-    0, 0, 8, 0, 167, 188, 67, 93, 210, 145, 133, 136, 15, 0, 0, 0,
+    0, 0, 8, 0, 73, 1, 68, 93, 210, 145, 133, 136, 15, 0, 0, 0,
     112, 0, 0, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     128, 1, 0, 0, 0, 0, 112, 97, 121, 108, 111, 97, 100, 46, 116, 120,
     116, 80, 75, 5, 6, 0, 0, 0, 0, 1, 0, 1, 0, 57, 0, 0,
@@ -57,40 +56,49 @@ static const unsigned char archive[] = {
 
 int main(void) {
     char buffer[8192];
+    zip_error_t error;
+    zip_source_t *asrc;
+    zip_t *za;
     int i;
 
-    for (i = 0; i < 200; i++) {
-        zip_error_t error;
-        zip_source_t *src;
-        zip_t *za;
-        zip_file_t *zf;
-
-        zip_error_init(&error);
-        src = zip_source_buffer_create(archive, sizeof(archive), 0, &error);
-        if (src == NULL) {
-            fprintf(stderr, "can't create source on iteration %d: %s\n", i, zip_error_strerror(&error));
-            zip_error_fini(&error);
-            return 1;
-        }
-        za = zip_open_from_source(src, 0, &error);
-        if (za == NULL) {
-            fprintf(stderr, "can't open archive on iteration %d: %s\n", i, zip_error_strerror(&error));
-            zip_source_free(src);
-            zip_error_fini(&error);
-            return 1;
-        }
+    zip_error_init(&error);
+    asrc = zip_source_buffer_create(archive, sizeof(archive), 0, &error);
+    if (asrc == NULL) {
+        fprintf(stderr, "can't create source: %s\n", zip_error_strerror(&error));
         zip_error_fini(&error);
+        return 1;
+    }
+    za = zip_open_from_source(asrc, 0, &error);
+    if (za == NULL) {
+        fprintf(stderr, "can't open archive: %s\n", zip_error_strerror(&error));
+        zip_source_free(asrc);
+        zip_error_fini(&error);
+        return 1;
+    }
+    zip_error_fini(&error);
 
-        zf = zip_fopen(za, "payload.txt", 0);
-        if (zf == NULL) {
-            fprintf(stderr, "can't open file on iteration %d: %s\n", i, zip_strerror(za));
+    for (i = 0; i < 200; i++) {
+        zip_source_t *src;
+
+        src = zip_source_zip_file_create(za, 0, 0, 0, -1, NULL, &error);
+        if (src == NULL) {
+            fprintf(stderr, "can't create entry source on iteration %d: %s\n", i, zip_error_strerror(&error));
             zip_discard(za);
             return 1;
         }
-        (void)zip_fread(zf, buffer, sizeof(buffer));
-        /* deliberately no zip_fclose: this frees the source while it is open */
-        zip_discard(za);
+        if (zip_source_open(src) < 0) {
+            fprintf(stderr, "can't open entry source on iteration %d\n", i);
+            zip_source_free(src);
+            zip_discard(za);
+            return 1;
+        }
+        while (zip_source_read(src, buffer, sizeof(buffer)) > 0) {
+            ;
+        }
+        /* deliberately no zip_source_close: this frees the source while it is open */
+        zip_source_free(src);
     }
 
+    zip_discard(za);
     return 0;
 }
