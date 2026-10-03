@@ -15,4 +15,7 @@ jobs:
           cmake --build build -j"$(nproc)"
       - name: leak check
         run: |
-          ASAN_OPTIONS=detect_leaks=1 ./build/regress/compress_stream_leak; echo "exit code: $?"
+          find build -name 'compress_stream_leak*' || true
+          BIN=$(find build -type f -name 'compress_stream_leak*' | head -1)
+          echo "binary: $BIN"
+          ASAN_OPTIONS=detect_leaks=1 "$BIN"; echo "exit code: $?"
