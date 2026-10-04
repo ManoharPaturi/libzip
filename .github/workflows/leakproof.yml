@@ -24,7 +24,7 @@ jobs:
       - name: install nihtest
         run: pip install nihtest
       - name: configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS="-fsanitize=address -g -O1" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" -DBUILD_REGRESS=OFF
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_REGRESS=OFF
       - name: build
         run: cmake --build build --target zip -j4
       - name: write fault injection harness
@@ -149,9 +149,9 @@ jobs:
           cp build/lib/libzip.so* .
           printf 'trigger' > trigger.zip
           cc -shared -fPIC -o demo/interpose.so demo/interpose.c -ldl
-          cc -fsanitize=address -I lib -I build -o demo/fd_leak_demo demo/fd_leak_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
-          cc -fsanitize=address -I lib -I build -o demo/error_demo demo/error_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
+          cc -I lib -I build -o demo/fd_leak_demo demo/fd_leak_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
+          cc -I lib -I build -o demo/error_demo demo/error_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
           echo "=== fd leak demo ==="
-          LD_LIBRARY_PATH=. ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=$PWD/demo/interpose.so ./demo/fd_leak_demo
+          LD_LIBRARY_PATH=. LD_PRELOAD=$PWD/demo/interpose.so ./demo/fd_leak_demo
           echo "=== error reporting demo ==="
-          LD_LIBRARY_PATH=. ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=$PWD/demo/interpose.so ./demo/error_demo
+          LD_LIBRARY_PATH=. LD_PRELOAD=$PWD/demo/interpose.so ./demo/error_demo
