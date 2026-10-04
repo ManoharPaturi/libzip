@@ -149,8 +149,8 @@ jobs:
           cp build/lib/libzip.so* .
           printf 'trigger' > trigger.zip
           cc -shared -fPIC -o demo/interpose.so demo/interpose.c -ldl
-          cc -I lib -I build -o demo/fd_leak_demo demo/fd_leak_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
-          cc -I lib -I build -o demo/error_demo demo/error_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
+          cc -fsanitize=address -I lib -I build -o demo/fd_leak_demo demo/fd_leak_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
+          cc -fsanitize=address -I lib -I build -o demo/error_demo demo/error_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
           echo "=== fd leak demo ==="
           LD_LIBRARY_PATH=. ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=$PWD/demo/interpose.so ./demo/fd_leak_demo
           echo "=== error reporting demo ==="
