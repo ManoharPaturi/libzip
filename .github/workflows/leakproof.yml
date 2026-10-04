@@ -129,7 +129,7 @@ jobs:
               zip_source_t *src;
 
               zip_error_init(&error);
-              if ((src = zip_source_file_create("trigger.zip", 0, -1, &error)) == NULL) {
+              if ((src = zip_source_file_create("clone.zip", 0, -1, &error)) == NULL) {
                   fprintf(stderr, "can't create source: %s\n", zip_error_strerror(&error));
                   return 1;
               }
@@ -153,6 +153,7 @@ jobs:
         run: |
           cp build/lib/libzip.so* .
           printf 'trigger' > trigger.zip
+          printf 'trigger' > clone.zip
           cc -shared -fPIC -o demo/interpose.so demo/interpose.c -ldl
           cc -I lib -I build -o demo/fd_leak_demo demo/fd_leak_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
           cc -I lib -I build -o demo/error_demo demo/error_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
