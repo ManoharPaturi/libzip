@@ -1,0 +1,157 @@
+name: leak verification for the stdio error path fixes
+
+on: push
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: unfixed
+            repo: nih-at/libzip
+            ref: main
+          - name: fixed
+            repo: ManoharPaturi/libzip
+            ref: pr-stdio-error-paths
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.ref }}
+      - name: install nihtest
+        run: pip install nihtest
+      - name: configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS="-fsanitize=address -g -O1" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" -DBUILD_REGRESS=OFF
+      - name: build
+        run: cmake --build build --target zip -j4
+      - name: write fault injection harness
+        run: |
+          mkdir -p demo
+          cat > demo/interpose.c <<'CEOF'
+          #define _GNU_SOURCE
+          #include <dlfcn.h>
+          #include <errno.h>
+          #include <stdarg.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include <unistd.h>
+          #include <sys/ioctl.h>
+          #include <linux/fs.h>
+
+          static int path_ends_with(int fd, const char *suffix) {
+              char link[4096], target[4096];
+              snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+              ssize_t n = readlink(link, target, sizeof(target) - 1);
+              if (n < 0) return 0;
+              target[n] = '\0';
+              size_t len = strlen(target), slen = strlen(suffix);
+              return len >= slen && strcmp(target + len - slen, suffix) == 0;
+          }
+
+          FILE *fdopen(int fd, const char *mode) {
+              static FILE *(*real)(int, const char *);
+              if (!real) real = dlsym(RTLD_NEXT, "fdopen");
+              if (strcmp(mode, "rb") == 0 && path_ends_with(fd, "trigger.zip")) {
+                  /* simulate a failing fdopen: the caller is responsible for fd */
+                  fprintf(stderr, "[interpose] failing fdopen for trigger.zip\n");
+                  return NULL;
+              }
+              return real(fd, mode);
+          }
+
+          int ftruncate(int fd, off_t length) {
+              static int (*real)(int, off_t);
+              if (!real) real = dlsym(RTLD_NEXT, "ftruncate");
+              if (path_ends_with(fd, ".part")) {
+                  fprintf(stderr, "[interpose] failing ftruncate for temp file\n");
+                  errno = EIO;
+                  return -1;
+              }
+              return real(fd, length);
+          }
+
+          int ioctl(int fd, unsigned long request, ...) {
+              static int (*real)(int, unsigned long, ...);
+              va_list ap; void *arg;
+              int ret;
+              if (!real) real = dlsym(RTLD_NEXT, "ioctl");
+              va_start(ap, request);
+              arg = va_arg(ap, void *);
+              va_end(ap);
+              if (request == FICLONERANGE && path_ends_with(fd, ".part")) {
+                  fprintf(stderr, "[interpose] pretending FICLONERANGE succeeds\n");
+                  return 0;
+              }
+              ret = real(fd, request, arg);
+              return ret;
+          }
+          CEOF
+          cat > demo/fd_leak_demo.c <<'CEOF'
+          #include <dirent.h>
+          #include <stdio.h>
+          #include <zip.h>
+
+          static int count_open_fds(void) {
+              DIR *d = opendir("/proc/self/fd");
+              struct dirent *de;
+              int count = 0;
+              if (d == NULL) return -1;
+              while ((de = readdir(d)) != NULL) {
+                  if (de->d_name[0] != '.') count++;
+              }
+              closedir(d);
+              return count - 1;
+          }
+
+          int main(void) {
+              int before, after, i;
+              before = count_open_fds();
+              for (i = 0; i < 4; i++) {
+                  if (zip_open("trigger.zip", ZIP_RDONLY, NULL) != NULL) {
+                      fprintf(stderr, "unexpected success\n");
+                      return 1;
+                  }
+              }
+              after = count_open_fds();
+              printf("open descriptors: %d before, %d after %d failed opens (%+d)\n", before, after, i, after - before);
+              return 0;
+          }
+          CEOF
+          cat > demo/error_demo.c <<'CEOF'
+          #include <stdio.h>
+          #include <zip.h>
+
+          int main(void) {
+              zip_error_t error;
+              zip_source_t *src;
+
+              zip_error_init(&error);
+              if ((src = zip_source_file_create("trigger.zip", 0, -1, &error)) == NULL) {
+                  fprintf(stderr, "can't create source: %s\n", zip_error_strerror(&error));
+                  return 1;
+              }
+              if (zip_source_begin_write_cloning(src, 0) < 0) {
+                  printf("begin_write_cloning failed, reported error: %s\n", zip_error_strerror(zip_source_error(src)));
+              }
+              else {
+                  printf("begin_write_cloning succeeded\n");
+                  zip_source_rollback_write(src);
+              }
+              zip_source_free(src);
+              return 0;
+          }
+          CEOF
+      - name: run demos
+        run: |
+          cp build/lib/libzip.so* .
+          printf 'trigger' > trigger.zip
+          cc -shared -fPIC -o demo/interpose.so demo/interpose.c -ldl
+          cc -I lib -I build -o demo/fd_leak_demo demo/fd_leak_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
+          cc -I lib -I build -o demo/error_demo demo/error_demo.c -L. -lzip -Wl,-rpath,'$ORIGIN/../..'
+          echo "=== fd leak demo ==="
+          LD_LIBRARY_PATH=. ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=$PWD/demo/interpose.so ./demo/fd_leak_demo
+          echo "=== error reporting demo ==="
+          LD_LIBRARY_PATH=. ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=$PWD/demo/interpose.so ./demo/error_demo
