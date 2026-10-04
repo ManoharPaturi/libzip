@@ -1,0 +1,23 @@
+name: leakproof
+on: [push]
+jobs:
+  asan-leak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang cmake libssl-dev zlib1g-dev libbz2-dev liblzma-dev libzstd-dev python3-pip
+          pip install nihtest
+      - name: build with sanitizers
+        run: |
+          CC=clang cmake -B build -DBUILD_REGRESS_TESTS=ON \
+            -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g -O1" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
+          cmake --build build -j"$(nproc)"
+      - name: leak check
+        run: |
+          find build -name 'compress_stream_leak*' || true
+          BIN=$(find build -type f -name 'compress_stream_leak*' | head -1)
+          echo "binary: $BIN"
+          ASAN_OPTIONS=detect_leaks=1 "$BIN"; echo "exit code: $?"
