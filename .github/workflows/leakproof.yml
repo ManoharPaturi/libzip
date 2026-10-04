@@ -133,6 +133,10 @@ jobs:
                   fprintf(stderr, "can't create source: %s\n", zip_error_strerror(&error));
                   return 1;
               }
+              if (zip_source_open(src) < 0) {
+                  fprintf(stderr, "can't open source: %s\n", zip_error_strerror(zip_source_error(src)));
+                  return 1;
+              }
               if (zip_source_begin_write_cloning(src, 0) < 0) {
                   printf("begin_write_cloning failed, reported error: %s\n", zip_error_strerror(zip_source_error(src)));
               }
@@ -140,6 +144,7 @@ jobs:
                   printf("begin_write_cloning succeeded\n");
                   zip_source_rollback_write(src);
               }
+              zip_source_close(src);
               zip_source_free(src);
               return 0;
           }
