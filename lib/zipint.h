@@ -576,6 +576,7 @@ bool _zip_dirent_apply_attributes(zip_dirent_t *, zip_file_attributes_t *, bool)
 int zip_dirent_check_consistency(zip_dirent_t *dirent);
 zip_dirent_t *_zip_dirent_clone(const zip_dirent_t *);
 void _zip_dirent_free(zip_dirent_t *);
+void _zip_file_free(zip_file_t *);
 void _zip_dirent_finalize(zip_dirent_t *);
 time_t zip_dirent_get_last_mod_mtime(zip_dirent_t *de);
 void _zip_dirent_init(zip_dirent_t *);
